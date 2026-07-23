@@ -3,3 +3,10 @@ _pycache_/
 *.pyc
 .env
 .DS_Store
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+crash.log
