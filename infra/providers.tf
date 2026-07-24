@@ -6,6 +6,14 @@ terraform {
       version = "~> 6.0"
     }
   }
+  backend "oci" {
+    bucket              = "terraform-state"
+    namespace           = "fr6bua3mkjcm"
+    key                 = "llm-platform/terraform.tfstate"
+    region              = "eu-frankfurt-1"
+    config_file_profile = "DEFAULT"
+  }
+
 }
 
 provider "oci" {
