@@ -6,13 +6,16 @@ terraform {
       version = "~> 6.0"
     }
   }
-  backend "oci" {
-    bucket              = "terraform-state"
-    namespace           = "fr6bua3mkjcm"
-    key                 = "llm-platform/terraform.tfstate"
-    region              = "eu-frankfurt-1"
-    config_file_profile = "DEFAULT"
-  }
+  # Remote state temporarily disabled — fresh local state for the new
+  # Johannesburg account. Re-enable (with a Johannesburg bucket) once the
+  # instance is provisioned.
+  # backend "oci" {
+  #   bucket              = "terraform-state"
+  #   namespace           = "<jhb-namespace>"
+  #   key                 = "llm-platform/terraform.tfstate"
+  #   region              = "af-johannesburg-1"
+  #   config_file_profile = "DEFAULT"
+  # }
 
 }
 
