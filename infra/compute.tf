@@ -14,8 +14,8 @@ resource "oci_core_instance" "server" {
   display_name        = "llm-platform-server"
 
   shape_config {
-    ocpus         = 4
-    memory_in_gbs = 24
+    ocpus         = 2
+    memory_in_gbs = 12
   }
 
   source_details {

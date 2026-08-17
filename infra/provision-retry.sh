@@ -2,52 +2,54 @@
 #
 # provision-retry.sh
 # ------------------
-# Oracle "Always Free" A1 (Ampere ARM) capacity in busy regions like
-# Frankfurt is frequently exhausted, so `terraform apply` fails with
-# "Out of host capacity". This script keeps retrying — cycling through
-# all availability domains — until a slot frees up, then exits.
+# Keeps running `terraform apply` until the Always-Free A1 instance
+# provisions (i.e. until "Out of host capacity" clears in the region).
+# It also retries through transient network/DNS blips, so it can run
+# unattended for hours/days. It stops only on a genuine config error.
+#
+# The first successful pass creates the compartment, network, and IAM;
+# only the capacity-gated instance keeps retrying after that.
 #
 # Usage:   bash provision-retry.sh      (run in its own terminal, leave it)
 # Stop:    Ctrl+C
 #
 set -u
 
-DIR="$(cd "$(dirname "$0")" && pwd)"   # the infra dir this script lives in
+DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG=/tmp/tf_a1_apply.log
 
-echo "Starting A1 provisioning retry loop from: $DIR"
-echo "Cycling availability domains every ~90s until capacity is available."
-echo "Press Ctrl+C to stop."
+echo "Retry loop starting from: $DIR"
+echo "Will retry every ~90s until the instance provisions. Ctrl+C to stop."
 echo
 
 round=0
 while true; do
   round=$((round + 1))
-  for ad in 1 2 0; do
-    echo "=== $(date '+%Y-%m-%d %H:%M:%S')  round $round  AD index $ad ==="
-    terraform -chdir="$DIR" apply -auto-approve -var="ad_index=$ad" > "$LOG" 2>&1
-    rc=$?
+  echo "=== $(date '+%Y-%m-%d %H:%M:%S')  round $round ==="
 
-    if [ $rc -eq 0 ]; then
-      echo
-      echo "############################################################"
-      echo "###  SUCCESS — instance provisioned on AD index $ad"
-      echo "############################################################"
-      terraform -chdir="$DIR" output
-      exit 0
-    fi
+  terraform -chdir="$DIR" apply -auto-approve > "$LOG" 2>&1
+  rc=$?
 
-    # If it failed for any reason OTHER than capacity, stop and show it.
-    if ! grep -q "Out of host capacity" "$LOG"; then
-      echo "!!! Non-capacity error on AD $ad — stopping so you can inspect it:"
-      echo
-      tail -40 "$LOG"
-      exit 2
-    fi
+  if [ $rc -eq 0 ]; then
+    echo
+    echo "############################################################"
+    echo "###  SUCCESS — instance provisioned"
+    echo "############################################################"
+    terraform -chdir="$DIR" output
+    exit 0
+  fi
 
-    echo "    AD index $ad: out of host capacity."
-  done
-  echo "--- all availability domains full, sleeping 90s ---"
+  # Retry on capacity shortages AND transient network errors.
+  if grep -qE "Out of host capacity|dial tcp|no such host|i/o timeout|TLS handshake|connection refused|connection reset|EOF|Client.Timeout" "$LOG"; then
+    echo "    transient (capacity or network) — retrying in 90s"
+    echo
+    sleep 90
+    continue
+  fi
+
+  # Anything else is a real error worth stopping for.
+  echo "!!! Non-transient error — stopping so you can inspect it:"
   echo
-  sleep 90
+  tail -40 "$LOG"
+  exit 2
 done
