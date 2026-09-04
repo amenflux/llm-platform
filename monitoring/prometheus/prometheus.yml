@@ -1,0 +1,16 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # Scrape the application's /metrics endpoint. "app" resolves via Docker's
+  # internal DNS to the app container on the compose network.
+  - job_name: llm-platform-app
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["app:8000"]
+
+  # Prometheus scraping itself — useful for confirming the stack is healthy.
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
