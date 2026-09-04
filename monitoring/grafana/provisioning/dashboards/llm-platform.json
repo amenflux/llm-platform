@@ -1,0 +1,149 @@
+{
+  "uid": "llm-platform",
+  "title": "LLM Platform — Service Overview",
+  "tags": ["llm", "observability"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-30m", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Requests (total)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "thresholds" }, "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] } },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [
+        { "refId": "A", "expr": "sum(http_requests_total{handler=\"/generate\"})", "legendFormat": "generate" }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Tokens processed (total)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "thresholds" }, "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "purple", "value": null }] } },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [
+        { "refId": "A", "expr": "sum(llm_tokens_total)", "legendFormat": "tokens" }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "p95 latency",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "thresholds" }, "unit": "s",
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "orange", "value": 5 },
+            { "color": "red", "value": 15 }
+          ] } },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_highr_seconds_bucket[5m])) by (le))", "legendFormat": "p95" }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Errors (5xx)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "thresholds" }, "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "red", "value": 1 }
+          ] } },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [
+        { "refId": "A", "expr": "sum(http_requests_total{status=\"5xx\"}) or vector(0)", "legendFormat": "5xx" }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Request rate by endpoint",
+      "description": "Traffic — one of the four golden signals.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "custom": { "lineWidth": 2, "fillOpacity": 10 } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "expr": "sum by (handler) (rate(http_requests_total[5m]))", "legendFormat": "{{handler}}" }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Latency percentiles",
+      "description": "Latency — golden signal. p50/p95/p99 from the request duration histogram.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "fieldConfig": {
+        "defaults": { "unit": "s", "custom": { "lineWidth": 2, "fillOpacity": 5 } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.50, sum(rate(http_request_duration_highr_seconds_bucket[5m])) by (le))", "legendFormat": "p50" },
+        { "refId": "B", "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_highr_seconds_bucket[5m])) by (le))", "legendFormat": "p95" },
+        { "refId": "C", "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_highr_seconds_bucket[5m])) by (le))", "legendFormat": "p99" }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Token throughput (tokens/sec)",
+      "description": "LLM-specific: prompt vs completion tokens. Drives cost and explains latency.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "lineWidth": 2, "fillOpacity": 20, "stacking": { "mode": "normal" } } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "expr": "sum by (type) (rate(llm_tokens_total[5m]))", "legendFormat": "{{type}}" }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Cumulative tokens by model",
+      "description": "Per-model token accounting — the basis for cost attribution.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "lineWidth": 2, "fillOpacity": 10 } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "expr": "sum by (model, type) (llm_tokens_total)", "legendFormat": "{{model}} — {{type}}" }
+      ]
+    }
+  ]
+}
