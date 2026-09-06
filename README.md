@@ -34,6 +34,11 @@ observability are the interesting problems in production.
 Everything runs as containers via Docker Compose. The model server runs
 separately so the same image works against a local model or a hosted API.
 
+A small **load generator** container sends a steady trickle of varied requests.
+Dashboards built on `rate()` queries show nothing while a service is idle, which
+makes a healthy system look broken — a constant low-rate baseline keeps latency,
+throughput and error panels meaningful.
+
 ---
 
 ## Quickstart
@@ -50,6 +55,9 @@ docker compose up -d --build
 | API        | http://localhost:8000   | Swagger UI at `/docs`          |
 | Prometheus | http://localhost:9090   | Targets under Status → Targets |
 | Grafana    | http://localhost:3000   | `admin` / `admin`              |
+
+The load generator starts automatically. Tune or disable it with
+`REQUEST_INTERVAL_SECONDS` in `docker-compose.yml`.
 
 Send a request:
 
@@ -84,11 +92,28 @@ end:
 
 Metrics exposed on `/metrics`:
 
-| Metric                                | Type      | Purpose                              |
-|---------------------------------------|-----------|--------------------------------------|
-| `http_requests_total`                 | counter   | Traffic and error rate by endpoint   |
-| `http_request_duration_highr_seconds` | histogram | Latency percentiles (p50/p95/p99)    |
-| `llm_tokens_total{type,model}`        | counter   | Token usage, split prompt/completion |
+| Metric                                 | Type      | Purpose                                          |
+|----------------------------------------|-----------|--------------------------------------------------|
+| `http_requests_total`                  | counter   | Traffic and error rate by endpoint               |
+| `http_request_duration_highr_seconds`  | histogram | End-to-end latency percentiles                   |
+| `llm_tokens_total{type,model}`         | counter   | Token usage, split prompt/completion             |
+| `llm_request_duration_seconds{model}`  | histogram | **Model call only** — isolates model from service |
+| `llm_tokens_per_second{model}`         | histogram | Generation throughput distribution               |
+| `llm_requests_in_flight`               | gauge     | Saturation — concurrent model calls              |
+| `llm_cost_usd_total{model}`            | counter   | Estimated spend from a per-model price table     |
+| `llm_errors_total{model,error_type}`   | counter   | Failures labelled by exception class             |
+
+Two of these are worth calling out:
+
+**`llm_request_duration_seconds` times the model call alone**, excluding HTTP and
+serialisation overhead. Compared against the end-to-end HTTP histogram it answers
+"is the model slow, or is my service slow?" — a question a single latency metric
+cannot.
+
+**`llm_requests_in_flight` uses a gauge that increments on entry and decrements on
+exit even when the call raises**, so it can't leak upward over time. Sustained
+growth means arrivals are outpacing completions — the earliest saturation signal
+you get.
 
 The provisioned Grafana dashboard covers the four golden signals (latency,
 traffic, errors, saturation) plus LLM-specific token throughput, which is what
@@ -126,6 +151,7 @@ Python 3.11 · FastAPI · Pydantic · Prometheus · Grafana · Docker · Docker 
 
 - [x] Inference API with structured logging
 - [x] Prometheus metrics and Grafana dashboards
+- [x] LLM-specific telemetry: throughput, concurrency, cost, error taxonomy
 - [x] Containerised stack via Docker Compose
 - [x] Terraform infrastructure definitions
 - [ ] Retrieval-augmented generation (chunking, embeddings, vector store)

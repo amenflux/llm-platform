@@ -4,146 +4,103 @@
   "tags": ["llm", "observability"],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "refresh": "10s",
-  "time": { "from": "now-30m", "to": "now" },
+  "time": { "from": "now-1h", "to": "now" },
   "panels": [
     {
-      "id": 1,
-      "type": "stat",
-      "title": "Requests (total)",
+      "id": 1, "type": "stat", "title": "Tokens processed",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
-      "fieldConfig": {
-        "defaults": { "color": { "mode": "thresholds" }, "unit": "short",
-          "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] } },
-        "overrides": []
-      },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "purple" } }, "overrides": [] },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
-      "targets": [
-        { "refId": "A", "expr": "sum(http_requests_total{handler=\"/generate\"})", "legendFormat": "generate" }
-      ]
+      "targets": [{ "refId": "A", "expr": "sum(llm_tokens_total)" }]
     },
     {
-      "id": 2,
-      "type": "stat",
-      "title": "Tokens processed (total)",
+      "id": 2, "type": "stat", "title": "Requests in flight",
+      "description": "Saturation signal — model calls being processed right now.",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
-      "fieldConfig": {
-        "defaults": { "color": { "mode": "thresholds" }, "unit": "short",
-          "thresholds": { "mode": "absolute", "steps": [{ "color": "purple", "value": null }] } },
-        "overrides": []
-      },
+      "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 3 }, { "color": "red", "value": 8 } ] }, "color": { "mode": "thresholds" } }, "overrides": [] },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
-      "targets": [
-        { "refId": "A", "expr": "sum(llm_tokens_total)", "legendFormat": "tokens" }
-      ]
+      "targets": [{ "refId": "A", "expr": "llm_requests_in_flight" }]
     },
     {
-      "id": 3,
-      "type": "stat",
-      "title": "p95 latency",
+      "id": 3, "type": "stat", "title": "p95 model latency",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
-      "fieldConfig": {
-        "defaults": { "color": { "mode": "thresholds" }, "unit": "s",
-          "thresholds": { "mode": "absolute", "steps": [
-            { "color": "green", "value": null },
-            { "color": "orange", "value": 5 },
-            { "color": "red", "value": 15 }
-          ] } },
-        "overrides": []
-      },
+      "fieldConfig": { "defaults": { "unit": "s", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 8 }, { "color": "red", "value": 20 } ] }, "color": { "mode": "thresholds" } }, "overrides": [] },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
-      "targets": [
-        { "refId": "A", "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_highr_seconds_bucket[5m])) by (le))", "legendFormat": "p95" }
-      ]
+      "targets": [{ "refId": "A", "expr": "histogram_quantile(0.95, sum(rate(llm_request_duration_seconds_bucket[5m])) by (le))" }]
     },
     {
-      "id": 4,
-      "type": "stat",
-      "title": "Errors (5xx)",
+      "id": 4, "type": "stat", "title": "Estimated spend (USD)",
+      "description": "Driven by a per-model price table. Self-hosted models cost nothing per token, so this reads zero until a hosted model is used.",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
-      "fieldConfig": {
-        "defaults": { "color": { "mode": "thresholds" }, "unit": "short",
-          "thresholds": { "mode": "absolute", "steps": [
-            { "color": "green", "value": null },
-            { "color": "red", "value": 1 }
-          ] } },
-        "overrides": []
-      },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 4, "color": { "mode": "fixed", "fixedColor": "green" } }, "overrides": [] },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
-      "targets": [
-        { "refId": "A", "expr": "sum(http_requests_total{status=\"5xx\"}) or vector(0)", "legendFormat": "5xx" }
-      ]
+      "targets": [{ "refId": "A", "expr": "sum(llm_cost_usd_total)" }]
     },
     {
-      "id": 5,
-      "type": "timeseries",
-      "title": "Request rate by endpoint",
-      "description": "Traffic — one of the four golden signals.",
+      "id": 5, "type": "timeseries", "title": "Model call latency (percentiles)",
+      "description": "Times the model call alone — excludes HTTP overhead, so a slow model is distinguishable from a slow service.",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
-      "fieldConfig": {
-        "defaults": { "unit": "reqps", "custom": { "lineWidth": 2, "fillOpacity": 10 } },
-        "overrides": []
-      },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "lineWidth": 2, "fillOpacity": 5 } }, "overrides": [] },
       "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
       "targets": [
-        { "refId": "A", "expr": "sum by (handler) (rate(http_requests_total[5m]))", "legendFormat": "{{handler}}" }
+        { "refId": "A", "expr": "histogram_quantile(0.50, sum(rate(llm_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p50" },
+        { "refId": "B", "expr": "histogram_quantile(0.95, sum(rate(llm_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p95" },
+        { "refId": "C", "expr": "histogram_quantile(0.99, sum(rate(llm_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p99" }
       ]
     },
     {
-      "id": 6,
-      "type": "timeseries",
-      "title": "Latency percentiles",
-      "description": "Latency — golden signal. p50/p95/p99 from the request duration histogram.",
+      "id": 6, "type": "timeseries", "title": "Generation throughput (tokens/sec)",
+      "description": "Output tokens generated per second. The headline number for inference performance.",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
-      "fieldConfig": {
-        "defaults": { "unit": "s", "custom": { "lineWidth": 2, "fillOpacity": 5 } },
-        "overrides": []
-      },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "lineWidth": 2, "fillOpacity": 10 } }, "overrides": [] },
       "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
       "targets": [
-        { "refId": "A", "expr": "histogram_quantile(0.50, sum(rate(http_request_duration_highr_seconds_bucket[5m])) by (le))", "legendFormat": "p50" },
-        { "refId": "B", "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_highr_seconds_bucket[5m])) by (le))", "legendFormat": "p95" },
-        { "refId": "C", "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_highr_seconds_bucket[5m])) by (le))", "legendFormat": "p99" }
+        { "refId": "A", "expr": "histogram_quantile(0.50, sum(rate(llm_tokens_per_second_bucket[5m])) by (le))", "legendFormat": "p50 tok/s" },
+        { "refId": "B", "expr": "histogram_quantile(0.95, sum(rate(llm_tokens_per_second_bucket[5m])) by (le))", "legendFormat": "p95 tok/s" }
       ]
     },
     {
-      "id": 7,
-      "type": "timeseries",
-      "title": "Token throughput (tokens/sec)",
-      "description": "LLM-specific: prompt vs completion tokens. Drives cost and explains latency.",
+      "id": 7, "type": "timeseries", "title": "Token rate by type",
+      "description": "Prompt vs completion tokens per second — what drives cost.",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
-      "fieldConfig": {
-        "defaults": { "unit": "short", "custom": { "lineWidth": 2, "fillOpacity": 20, "stacking": { "mode": "normal" } } },
-        "overrides": []
-      },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "lineWidth": 2, "fillOpacity": 20, "stacking": { "mode": "normal" } } }, "overrides": [] },
       "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
-      "targets": [
-        { "refId": "A", "expr": "sum by (type) (rate(llm_tokens_total[5m]))", "legendFormat": "{{type}}" }
-      ]
+      "targets": [{ "refId": "A", "expr": "sum by (type) (rate(llm_tokens_total[5m]))", "legendFormat": "{{type}}" }]
     },
     {
-      "id": 8,
-      "type": "timeseries",
-      "title": "Cumulative tokens by model",
-      "description": "Per-model token accounting — the basis for cost attribution.",
+      "id": 8, "type": "timeseries", "title": "Concurrency over time",
+      "description": "In-flight model calls. Sustained growth means arrivals are outpacing completions.",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
-      "fieldConfig": {
-        "defaults": { "unit": "short", "custom": { "lineWidth": 2, "fillOpacity": 10 } },
-        "overrides": []
-      },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "lineWidth": 2, "fillOpacity": 20 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } },
+      "targets": [{ "refId": "A", "expr": "llm_requests_in_flight", "legendFormat": "in flight" }]
+    },
+    {
+      "id": 9, "type": "timeseries", "title": "HTTP request rate by endpoint",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "lineWidth": 2, "fillOpacity": 10 } }, "overrides": [] },
       "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
-      "targets": [
-        { "refId": "A", "expr": "sum by (model, type) (llm_tokens_total)", "legendFormat": "{{model}} — {{type}}" }
-      ]
+      "targets": [{ "refId": "A", "expr": "sum by (handler) (rate(http_requests_total[5m]))", "legendFormat": "{{handler}}" }]
+    },
+    {
+      "id": 10, "type": "timeseries", "title": "Model errors by type",
+      "description": "Labelled by exception class, so a timeout is distinguishable from a bad model name.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "lineWidth": 2, "fillOpacity": 20 }, "color": { "mode": "palette-classic" } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [{ "refId": "A", "expr": "sum by (error_type) (rate(llm_errors_total[5m]))", "legendFormat": "{{error_type}}" }]
     }
   ]
 }
