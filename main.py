@@ -9,7 +9,9 @@ import logging
 import os
 import time
 import uuid
+from contextlib import asynccontextmanager
 
+import rag
 from fastapi import FastAPI, HTTPException
 from openai import OpenAI
 from prometheus_client import Counter, Gauge, Histogram
@@ -36,7 +38,15 @@ MODEL_PRICING = {
     "gpt-4o": (2.50, 10.00),
 }
 
-app = FastAPI(title="LLM Platform", version="0.2.0")
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    # Publish the corpus size on boot so the gauge is correct after a redeploy
+    # rather than only after the next ingest.
+    rag_corpus_chunks.set(rag.corpus_size())
+    yield
+
+
+app = FastAPI(title="LLM Platform", version="0.3.0", lifespan=lifespan)
 
 # Exposes /metrics with request counts, a latency histogram and status codes.
 Instrumentator().instrument(app).expose(app)
@@ -87,6 +97,51 @@ llm_errors_total = Counter(
     ["model", "error_type"],
 )
 
+# ---------------------------------------------------------------------------
+# RAG metrics. Retrieval adds two network hops before the model is even called,
+# so each stage is timed separately — otherwise a slow answer is unattributable.
+# ---------------------------------------------------------------------------
+
+rag_embedding_duration_seconds = Histogram(
+    "rag_embedding_duration_seconds",
+    "Time to turn the question into a vector",
+    buckets=(0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2),
+)
+
+rag_retrieval_duration_seconds = Histogram(
+    "rag_retrieval_duration_seconds",
+    "Time to search the vector store for nearest chunks",
+    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1),
+)
+
+# Retrieval quality: if top scores trend down, the corpus no longer covers what
+# users are asking — a drift signal you cannot see from latency alone.
+rag_top_score = Histogram(
+    "rag_top_score",
+    "Similarity score of the best-matching chunk",
+    buckets=(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0),
+)
+
+rag_chunks_indexed_total = Counter(
+    "rag_chunks_indexed_total",
+    "Chunks written to the vector store since this process started",
+)
+
+# Questions the corpus could not answer. A rising rate is the clearest signal
+# that the indexed documents no longer match what people are asking.
+rag_low_confidence_total = Counter(
+    "rag_low_confidence_total",
+    "Questions refused because no chunk cleared the similarity threshold",
+)
+
+# Corpus size is a gauge, not a counter: the ingestion counter resets with the
+# process while the stored corpus persists, so only a gauge read from the vector
+# store reports what is actually retrievable.
+rag_corpus_chunks = Gauge(
+    "rag_corpus_chunks",
+    "Chunks currently stored in the vector store",
+)
+
 client = OpenAI(base_url=OLLAMA_BASE_URL, api_key="ollama")
 
 
@@ -99,6 +154,21 @@ def estimate_cost_usd(model: str, prompt_tokens: int, completion_tokens: int) ->
 class GenerateRequest(BaseModel):
     prompt: str
     model: str = DEFAULT_MODEL
+
+
+class Document(BaseModel):
+    source: str
+    text: str
+
+
+class IngestRequest(BaseModel):
+    documents: list[Document]
+
+
+class AskRequest(BaseModel):
+    question: str
+    model: str = DEFAULT_MODEL
+    top_k: int = 4
 
 
 @app.get("/")
@@ -173,3 +243,143 @@ def generate_text(payload: GenerateRequest):
             f"error_type={error_type} error={exc}"
         )
         raise HTTPException(status_code=500, detail="LLM request failed")
+
+
+@app.post("/ingest")
+def ingest_documents(payload: IngestRequest):
+    """Chunk, embed and store documents so they can be retrieved later."""
+    started = time.perf_counter()
+    try:
+        result = rag.index_documents([d.model_dump() for d in payload.documents])
+        rag_chunks_indexed_total.inc(result.get("chunks_indexed", 0))
+        rag_corpus_chunks.set(rag.corpus_size())
+        elapsed = time.perf_counter() - started
+        logging.info(
+            f"status=success operation=ingest documents={len(payload.documents)} "
+            f"chunks={result.get('chunks_indexed')} duration={elapsed:.3f}s"
+        )
+        return result
+    except Exception as exc:
+        logging.error(f"status=error operation=ingest error_type={type(exc).__name__} error={exc}")
+        raise HTTPException(status_code=500, detail="ingestion failed")
+
+
+@app.post("/ask")
+def ask(payload: AskRequest):
+    """Answer a question grounded in the indexed documents.
+
+    Three timed stages: embed the question, search the vector store, then
+    generate. Timing them separately is what makes a slow answer diagnosable.
+    """
+    request_id = str(uuid.uuid4())
+    model = payload.model
+
+    try:
+        # Stage 1 + 2 — embed the question and find the nearest chunks.
+        retrieval_start = time.perf_counter()
+        embed_start = time.perf_counter()
+        query_vector = rag.embed_texts([payload.question])[0]
+        rag_embedding_duration_seconds.observe(time.perf_counter() - embed_start)
+
+        search_start = time.perf_counter()
+        hits = rag.qdrant.query_points(
+            collection_name=rag.COLLECTION_NAME,
+            query=query_vector,
+            limit=payload.top_k,
+            with_payload=True,
+        ).points
+        rag_retrieval_duration_seconds.observe(time.perf_counter() - search_start)
+
+        chunks = [
+            {
+                "text": h.payload.get("text", ""),
+                "source": h.payload.get("source", "unknown"),
+                "score": round(h.score, 4),
+            }
+            for h in hits
+        ]
+        retrieval_duration = time.perf_counter() - retrieval_start
+        if chunks:
+            rag_top_score.observe(chunks[0]["score"])
+
+        # Refuse before spending a model call. Retrieval already answered the
+        # question "is this in the corpus at all?" — generating anyway wastes
+        # tokens and lets the model improvise from weakly-related text.
+        if not chunks or chunks[0]["score"] < rag.MIN_SCORE:
+            rag_low_confidence_total.inc()
+            top = chunks[0]["score"] if chunks else 0.0
+            logging.info(
+                f"request_id={request_id} model={model} status=refused operation=ask "
+                f"top_score={top} threshold={rag.MIN_SCORE} "
+                f"retrieval_latency={retrieval_duration:.3f}s"
+            )
+            return {
+                "answer": "The indexed documents do not contain an answer to that question.",
+                "request_id": request_id,
+                "model": model,
+                "refused": True,
+                "sources": [],
+                "timings": {
+                    "retrieval_seconds": round(retrieval_duration, 3),
+                    "generation_seconds": 0.0,
+                },
+                "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+            }
+
+        # Stage 3 — generate an answer constrained to the retrieved context.
+        prompt = rag.build_prompt(payload.question, chunks)
+
+        with llm_requests_in_flight.track_inprogress():
+            model_start = time.perf_counter()
+            response = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            model_duration = time.perf_counter() - model_start
+
+        prompt_tokens = response.usage.prompt_tokens
+        completion_tokens = response.usage.completion_tokens
+        answer = response.choices[0].message.content
+
+        tokens_per_second = completion_tokens / model_duration if model_duration > 0 else 0
+        cost_usd = estimate_cost_usd(model, prompt_tokens, completion_tokens)
+
+        llm_tokens_total.labels(type="prompt", model=model).inc(prompt_tokens)
+        llm_tokens_total.labels(type="completion", model=model).inc(completion_tokens)
+        llm_request_duration_seconds.labels(model=model).observe(model_duration)
+        llm_tokens_per_second.labels(model=model).observe(tokens_per_second)
+        llm_cost_usd_total.labels(model=model).inc(cost_usd)
+
+        logging.info(
+            f"request_id={request_id} model={model} status=success operation=ask "
+            f"chunks_retrieved={len(chunks)} top_score={chunks[0]['score'] if chunks else 0} "
+            f"retrieval_latency={retrieval_duration:.3f}s model_latency={model_duration:.3f}s "
+            f"prompt_tokens={prompt_tokens} completion_tokens={completion_tokens}"
+        )
+
+        return {
+            "answer": answer,
+            "request_id": request_id,
+            "model": model,
+            # Returning the sources is what makes a RAG answer auditable —
+            # the caller can verify the claim against the cited passage.
+            "sources": [{"source": c["source"], "score": c["score"]} for c in chunks],
+            "timings": {
+                "retrieval_seconds": round(retrieval_duration, 3),
+                "generation_seconds": round(model_duration, 3),
+            },
+            "usage": {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": response.usage.total_tokens,
+            },
+        }
+
+    except Exception as exc:
+        error_type = type(exc).__name__
+        llm_errors_total.labels(model=model, error_type=error_type).inc()
+        logging.error(
+            f"request_id={request_id} model={model} status=error operation=ask "
+            f"error_type={error_type} error={exc}"
+        )
+        raise HTTPException(status_code=500, detail="RAG query failed")
