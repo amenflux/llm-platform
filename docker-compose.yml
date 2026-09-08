@@ -47,6 +47,7 @@ services:
     container_name: llm-platform-loadgen
     environment:
       TARGET_URL: http://app:8000/generate
+      ASK_URL: http://app:8000/ask
       REQUEST_INTERVAL_SECONDS: "20"
     depends_on:
       - app
