@@ -155,6 +155,20 @@ def retrieve(question: str, top_k: int = 4) -> list[dict]:
     ]
 
 
+def corpus_size() -> int:
+    """Chunks currently stored, read from the vector store itself.
+
+    The ingestion counter cannot answer this: it resets when the process
+    restarts, while the corpus persists in the volume. Asking Qdrant is the only
+    way to report what is actually retrievable right now.
+    """
+    try:
+        return qdrant.count(collection_name=COLLECTION_NAME, exact=True).count
+    except Exception:
+        # The collection does not exist until the first ingest.
+        return 0
+
+
 def build_prompt(question: str, chunks: list[dict]) -> str:
     """Assemble the retrieved context and the question into one prompt.
 

@@ -7,7 +7,7 @@
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 4,
+  "version": 5,
   "refresh": "10s",
   "time": {
     "from": "now-1h",
@@ -485,8 +485,8 @@
     {
       "id": 11,
       "type": "stat",
-      "title": "Chunks indexed",
-      "description": "Size of the retrievable corpus written during this range.",
+      "title": "Corpus size (chunks)",
+      "description": "Read from the vector store, not from the ingestion counter \u2014 a counter resets with the process while the stored corpus persists.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -519,7 +519,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(increase(rag_chunks_indexed_total[$__range]))"
+          "expr": "rag_corpus_chunks"
         }
       ]
     },

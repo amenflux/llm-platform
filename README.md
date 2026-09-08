@@ -184,7 +184,8 @@ Metrics exposed on `/metrics`:
 | `rag_embedding_duration_seconds`       | histogram | Stage 1 — turning the question into a vector     |
 | `rag_retrieval_duration_seconds`       | histogram | Stage 2 — vector search                          |
 | `rag_top_score`                        | histogram | **Retrieval quality** — similarity of best match |
-| `rag_chunks_indexed_total`             | counter   | Size of the retrievable corpus                   |
+| `rag_chunks_indexed_total`             | counter   | Chunks ingested since the process started        |
+| `rag_corpus_chunks`                    | gauge     | Chunks currently stored — read from the store    |
 | `rag_low_confidence_total`             | counter   | Questions refused — nothing cleared the threshold |
 
 Four of these are worth calling out:
@@ -208,6 +209,12 @@ how closely the best-matching chunk matched each question. A sustained downward
 trend means the corpus no longer covers what people are asking — retrieval drift.
 That is invisible in latency, error rate, CPU or any other infrastructure metric,
 and it is usually the first thing to go wrong in a RAG system that was working.
+
+**Corpus size is a gauge, not a counter.** A counter resets when the process
+restarts while the indexed corpus persists in its volume, so an ingestion counter
+answers "how much was ingested by this process", never "how much is retrievable
+right now". The gauge is read from the vector store on every ingest and on
+startup, so it stays correct across redeploys.
 
 The provisioned Grafana dashboard covers the four golden signals (latency,
 traffic, errors, saturation) plus LLM-specific token throughput, which is what

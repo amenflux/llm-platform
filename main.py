@@ -9,6 +9,7 @@ import logging
 import os
 import time
 import uuid
+from contextlib import asynccontextmanager
 
 import rag
 from fastapi import FastAPI, HTTPException
@@ -37,7 +38,15 @@ MODEL_PRICING = {
     "gpt-4o": (2.50, 10.00),
 }
 
-app = FastAPI(title="LLM Platform", version="0.2.0")
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    # Publish the corpus size on boot so the gauge is correct after a redeploy
+    # rather than only after the next ingest.
+    rag_corpus_chunks.set(rag.corpus_size())
+    yield
+
+
+app = FastAPI(title="LLM Platform", version="0.3.0", lifespan=lifespan)
 
 # Exposes /metrics with request counts, a latency histogram and status codes.
 Instrumentator().instrument(app).expose(app)
@@ -115,7 +124,7 @@ rag_top_score = Histogram(
 
 rag_chunks_indexed_total = Counter(
     "rag_chunks_indexed_total",
-    "Chunks written to the vector store",
+    "Chunks written to the vector store since this process started",
 )
 
 # Questions the corpus could not answer. A rising rate is the clearest signal
@@ -123,6 +132,14 @@ rag_chunks_indexed_total = Counter(
 rag_low_confidence_total = Counter(
     "rag_low_confidence_total",
     "Questions refused because no chunk cleared the similarity threshold",
+)
+
+# Corpus size is a gauge, not a counter: the ingestion counter resets with the
+# process while the stored corpus persists, so only a gauge read from the vector
+# store reports what is actually retrievable.
+rag_corpus_chunks = Gauge(
+    "rag_corpus_chunks",
+    "Chunks currently stored in the vector store",
 )
 
 client = OpenAI(base_url=OLLAMA_BASE_URL, api_key="ollama")
@@ -235,6 +252,7 @@ def ingest_documents(payload: IngestRequest):
     try:
         result = rag.index_documents([d.model_dump() for d in payload.documents])
         rag_chunks_indexed_total.inc(result.get("chunks_indexed", 0))
+        rag_corpus_chunks.set(rag.corpus_size())
         elapsed = time.perf_counter() - started
         logging.info(
             f"status=success operation=ingest documents={len(payload.documents)} "
