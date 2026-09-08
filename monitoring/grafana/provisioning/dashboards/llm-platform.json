@@ -7,7 +7,7 @@
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 3,
+  "version": 4,
   "refresh": "10s",
   "time": {
     "from": "now-1h",
@@ -754,6 +754,87 @@
           "refId": "C",
           "expr": "histogram_quantile(0.10, sum(rate(rag_top_score_bucket[5m])) by (le))",
           "legendFormat": "p10 (worst \u2014 unanswerable questions)"
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "Grounded answers vs refusals",
+      "description": "A question is refused when no retrieved chunk clears RAG_MIN_SCORE. A rising refusal rate means the corpus no longer covers what is being asked \u2014 the same drift signal as rag_top_score, expressed as a rate you can alert on.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 40
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 20,
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "refused (not in corpus)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "answered from corpus"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(rag_top_score_count[5m])) - sum(rate(rag_low_confidence_total[5m]))",
+          "legendFormat": "answered from corpus"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(rag_low_confidence_total[5m]))",
+          "legendFormat": "refused (not in corpus)"
         }
       ]
     }

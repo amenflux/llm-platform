@@ -118,6 +118,13 @@ rag_chunks_indexed_total = Counter(
     "Chunks written to the vector store",
 )
 
+# Questions the corpus could not answer. A rising rate is the clearest signal
+# that the indexed documents no longer match what people are asking.
+rag_low_confidence_total = Counter(
+    "rag_low_confidence_total",
+    "Questions refused because no chunk cleared the similarity threshold",
+)
+
 client = OpenAI(base_url=OLLAMA_BASE_URL, api_key="ollama")
 
 
@@ -276,6 +283,30 @@ def ask(payload: AskRequest):
         retrieval_duration = time.perf_counter() - retrieval_start
         if chunks:
             rag_top_score.observe(chunks[0]["score"])
+
+        # Refuse before spending a model call. Retrieval already answered the
+        # question "is this in the corpus at all?" — generating anyway wastes
+        # tokens and lets the model improvise from weakly-related text.
+        if not chunks or chunks[0]["score"] < rag.MIN_SCORE:
+            rag_low_confidence_total.inc()
+            top = chunks[0]["score"] if chunks else 0.0
+            logging.info(
+                f"request_id={request_id} model={model} status=refused operation=ask "
+                f"top_score={top} threshold={rag.MIN_SCORE} "
+                f"retrieval_latency={retrieval_duration:.3f}s"
+            )
+            return {
+                "answer": "The indexed documents do not contain an answer to that question.",
+                "request_id": request_id,
+                "model": model,
+                "refused": True,
+                "sources": [],
+                "timings": {
+                    "retrieval_seconds": round(retrieval_duration, 3),
+                    "generation_seconds": 0.0,
+                },
+                "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+            }
 
         # Stage 3 — generate an answer constrained to the retrieved context.
         prompt = rag.build_prompt(payload.question, chunks)

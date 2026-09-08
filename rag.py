@@ -25,7 +25,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, PointStruct, VectorParams
 
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "all-minilm")
 COLLECTION_NAME = os.getenv("COLLECTION_NAME", "documents")
 
 # Chunking is the highest-leverage knob in RAG:
@@ -35,6 +35,11 @@ COLLECTION_NAME = os.getenv("COLLECTION_NAME", "documents")
 # two neighbouring chunks.
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "800"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "150"))
+
+# Confidence floor. Below this similarity the corpus does not meaningfully cover
+# the question, and calling the model anyway costs tokens to produce a non-answer
+# — or worse, invites it to improvise from whatever weakly-related text came back.
+MIN_SCORE = float(os.getenv("RAG_MIN_SCORE", "0.25"))
 
 qdrant = QdrantClient(url=QDRANT_URL)
 

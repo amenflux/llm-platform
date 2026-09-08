@@ -46,7 +46,8 @@ throughput and error panels meaningful.
 ## Quickstart
 
 Requires Docker and a running [Ollama](https://ollama.com) instance with a model
-pulled (`ollama pull llama3.2:3b`).
+pulled (`ollama pull llama3.2:3b`) plus an embedding model for RAG
+(`ollama pull all-minilm` — 45 MB, 384 dimensions).
 
 ```bash
 docker compose up -d --build
@@ -144,6 +145,17 @@ against the passage it came from.
 from the width of the first embedding returned, so changing `EMBEDDING_MODEL`
 needs no code change.
 
+**Retrieval doubles as a confidence check.** Before generating, `/ask` compares
+the best chunk's score against `RAG_MIN_SCORE`. Below it, the request is refused
+outright with no model call — retrieval has already answered "is this in the
+corpus at all?", and generating anyway both wastes tokens and invites the model
+to improvise from weakly-related text. Measured on this corpus:
+
+| Question | Top score | Outcome | Cost |
+|---|---|---|---|
+| Covered by the documents | 0.59 | answered with sources | 899 prompt tokens, 7.0s |
+| Not covered at all       | 0.16 | refused                | 0 tokens, 0.36s |
+
 ---
 
 ## Observability
@@ -173,6 +185,7 @@ Metrics exposed on `/metrics`:
 | `rag_retrieval_duration_seconds`       | histogram | Stage 2 — vector search                          |
 | `rag_top_score`                        | histogram | **Retrieval quality** — similarity of best match |
 | `rag_chunks_indexed_total`             | counter   | Size of the retrievable corpus                   |
+| `rag_low_confidence_total`             | counter   | Questions refused — nothing cleared the threshold |
 
 Four of these are worth calling out:
 
@@ -213,10 +226,11 @@ locally, in Compose, or in a cluster:
 | `OLLAMA_BASE_URL` | `http://localhost:11434/v1`    | Model server endpoint     |
 | `DEFAULT_MODEL`   | `llama3.2:3b`                  | Model used when unspecified |
 | `QDRANT_URL`      | `http://localhost:6333`        | Vector store endpoint     |
-| `EMBEDDING_MODEL` | `nomic-embed-text`             | Model used to embed text  |
+| `EMBEDDING_MODEL` |  `all-minilm`                    | Model used to embed text  |
 | `COLLECTION_NAME` | `documents`                    | Qdrant collection         |
 | `CHUNK_SIZE`      | `800`                          | Target chunk length (chars) |
 | `CHUNK_OVERLAP`   | `150`                          | Overlap carried between chunks |
+| `RAG_MIN_SCORE`   | `0.25`                         | Similarity floor below which a question is refused |
 
 ---
 
