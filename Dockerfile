@@ -10,9 +10,11 @@ WORKDIR /app
 # Copy requirements first: Docker caches this layer, so changing application
 # code doesn't force a full dependency reinstall on every build.
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Generous timeout and retries: the default 15s read timeout makes builds fail
+# on slow or unreliable networks with a misleading "no matching distribution".
+RUN pip install --no-cache-dir --timeout 120 --retries 10 -r requirements.txt
 
-COPY main.py .
+COPY main.py rag.py ./
 
 # Run as an unprivileged user rather than root.
 RUN useradd --create-home appuser && chown -R appuser:appuser /app
